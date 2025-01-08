@@ -2,22 +2,22 @@ package com.baber.apigateway.filter;
 
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
-
-import java.util.*;
-import java.util.function.Predicate;
-
+import reactor.core.publisher.Flux;
+import java.util.List;
 @Component
 public class RouteValidator {
-
     public static final List<String> openApiEndpoints = List.of(
             "/auth/register",
-            "/auth/token",
+            "/auth/login",
+            "/permissions/**",
+            "/roles/**",
+            "/permissions/defaults/**",
+            "/api/saloon/getNearBySaloons",
             "/eureka"
     );
-
-    public Predicate<ServerHttpRequest> isSecured =
-            request -> openApiEndpoints
-                    .stream()
-                    .noneMatch(uri -> request.getURI().getPath().contains(uri));
-
+    public Flux<Boolean> isSecured(ServerHttpRequest request) {
+        String path = request.getURI().getPath();
+        return Flux.fromIterable(openApiEndpoints)
+                .map(uri -> !path.contains(uri));
+    }
 }
