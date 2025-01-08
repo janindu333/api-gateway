@@ -13,8 +13,7 @@ public class ApiGatewayApplication {
     private static final ServiceLogger logger = new ServiceLogger(ApiGatewayApplication.class);
     public static void main(String[] args) {
         SpringApplication.run(ApiGatewayApplication.class, args);
-
         // Log a message when the application starts
-        logger.info("application started successfully.");
+        logger.info("api gateway application started successfully.");
     }
 }
