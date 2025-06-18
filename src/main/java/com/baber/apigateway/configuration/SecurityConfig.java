@@ -26,7 +26,7 @@
 //     public SecurityWebFilterChain springSecurityWebFilterChain(ServerHttpSecurity serverHttpSecurity){
 //         serverHttpSecurity.csrf().disable()
 //                 .authorizeExchange(
-//                     exchange -> 
+//                     exchange ->
 //                     exchange
 //                     .pathMatchers("/eureka/**").permitAll()
 //                     .pathMatchers("/test").permitAll()

@@ -1,14 +1,10 @@
-# Use an official Java runtime as a parent image
-FROM openjdk:21-jdk-slim
-
-# Set the working directory inside the container
+FROM openjdk:21-jdk-slim AS build
 WORKDIR /app
+COPY . .
+RUN ./mvnw package -DskipTests
 
-# Copy the application JAR file into the container
-COPY target/api-gateway-0.0.1-SNAPSHOT.jar app.jar
-
-# Expose the port that the API Gateway will run on
-EXPOSE 8081
-
-# Command to run the API Gateway
+FROM openjdk:21-jdk-slim
+WORKDIR /app
+COPY --from=build /app/target/api-gateway-0.0.1-SNAPSHOT.jar app.jar
+EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar", "--spring.profiles.active=docker"]
