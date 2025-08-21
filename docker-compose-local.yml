@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  # Note: Using your existing MySQL service and Redis from Docker Desktop
+  # MySQL is running as a service on localhost:3306
+  # Redis is running in Docker on localhost:6379
+  # No need to start additional containers
+
+networks:
+  baber-gateway-network:
+    driver: bridge
+    name: baber-gateway-network 

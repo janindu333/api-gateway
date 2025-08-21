@@ -1,0 +1,268 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: saloon-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-saloon_service}
+      MYSQL_USER: ${DB_USERNAME:-saloon_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-saloon_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - saloon-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 40s
+
+  # Redis Cache with Persistence
+  redis:
+    image: redis:7-alpine
+    container_name: saloon-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - saloon-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Eureka Discovery Server
+  discovery-server:
+    image: saloon/discovery-server:latest
+    container_name: discovery-server
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8761
+      - EUREKA_USERNAME=${EUREKA_USERNAME:-eureka}
+      - EUREKA_PASSWORD=${EUREKA_PASSWORD:-password}
+    ports:
+      - "8761:8761"
+    networks:
+      - saloon-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Identity Service
+  identity-service:
+    image: saloon/identity-service:latest
+    container_name: identity-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME:-saloon_service}
+      - DB_USERNAME=${DB_USERNAME:-saloon_user}
+      - DB_PASSWORD=${DB_PASSWORD:-saloon_password}
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-for-development-only}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8081:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - saloon-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # API Gateway
+  api-gateway:
+    image: saloon/api-gateway:latest
+    container_name: api-gateway
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8080
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-for-development-only}
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    networks:
+      - saloon-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Appointment Service
+  appointment-service:
+    image: saloon/appointment-service:latest
+    container_name: appointment-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME:-saloon_service}
+      - DB_USERNAME=${DB_USERNAME:-saloon_user}
+      - DB_PASSWORD=${DB_PASSWORD:-saloon_password}
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - REDIS_HOST=redis
+    ports:
+      - "8082:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - saloon-network
+
+  # Saloon Service
+  saloon-service:
+    image: saloon/saloon-service:latest
+    container_name: saloon-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME:-saloon_service}
+      - DB_USERNAME=${DB_USERNAME:-saloon_user}
+      - DB_PASSWORD=${DB_PASSWORD:-saloon_password}
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - REDIS_HOST=redis
+    ports:
+      - "8083:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - saloon-network
+
+  # Booking Service
+  booking-service:
+    image: saloon/booking-service:latest
+    container_name: booking-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME:-saloon_service}
+      - DB_USERNAME=${DB_USERNAME:-saloon_user}
+      - DB_PASSWORD=${DB_PASSWORD:-saloon_password}
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - REDIS_HOST=redis
+    ports:
+      - "8084:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - saloon-network
+
+  # Notification Service
+  notification-service:
+    image: saloon/notification-service:latest
+    container_name: notification-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME:-saloon_service}
+      - DB_USERNAME=${DB_USERNAME:-saloon_user}
+      - DB_PASSWORD=${DB_PASSWORD:-saloon_password}
+      - EUREKA_URL=http://${EUREKA_USERNAME:-eureka}:${EUREKA_PASSWORD:-password}@discovery-server:8761/eureka
+      - REDIS_HOST=redis
+    ports:
+      - "8085:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - saloon-network
+
+  # Zipkin for Distributed Tracing (Optional)
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - saloon-network
+
+  # Prometheus for Metrics (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - saloon-network
+
+  # Grafana for Monitoring (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - saloon-network
+
+networks:
+  saloon-network:
+    driver: bridge
+    name: saloon-network
+
+volumes:
+  mysql_data:
+    name: saloon-mysql-data
+  redis_data:
+    name: saloon-redis-data
+  grafana_data:
+    name: saloon-grafana-data

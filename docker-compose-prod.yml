@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # MySQL Database for Production
+  mysql-gateway-prod:
+    image: mysql:8.0
+    container_name: baber-mysql-gateway-prod
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: baber_gateway
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_gateway_prod_data:/var/lib/mysql
+      - ./scripts/init-blacklist-db.sql:/docker-entrypoint-initdb.d/init-blacklist-db.sql:ro
+    networks:
+      - baber-prod-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Redis for Production
+  redis-gateway-prod:
+    image: redis:7-alpine
+    container_name: baber-redis-gateway-prod
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_gateway_prod_data:/data
+      - ./redis-prod.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - baber-prod-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # API Gateway Production
+  api-gateway-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: baber-api-gateway-prod
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_HOST=mysql-gateway-prod
+      - DB_PORT=3306
+      - DB_NAME=baber_gateway
+      - DB_USERNAME=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - REDIS_HOST=redis-gateway-prod
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET}
+      - EUREKA_URL=${EUREKA_URL}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql-gateway-prod:
+        condition: service_healthy
+      redis-gateway-prod:
+        condition: service_healthy
+    networks:
+      - baber-prod-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+networks:
+  baber-prod-network:
+    driver: bridge
+    name: baber-prod-network
+
+volumes:
+  mysql_gateway_prod_data:
+    name: baber-mysql-gateway-prod-data
+  redis_gateway_prod_data:
+    name: baber-redis-gateway-prod-data 

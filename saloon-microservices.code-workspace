@@ -1,0 +1,122 @@
+{
+    "folders": [
+        {
+            "name": "API Gateway",
+            "path": "./api-gateway"
+        },
+        {
+            "name": "Identity Service",
+            "path": "./identity-service"
+        },
+        {
+            "name": "Discovery Server",
+            "path": "./discovery-server"
+        },
+        {
+            "name": "Appointment Service",
+            "path": "./appointment-service"
+        },
+        {
+            "name": "Saloon Service",
+            "path": "./saloon-service"
+        },
+        {
+            "name": "Booking Service",
+            "path": "./booking-service"
+        },
+        {
+            "name": "Notification Service",
+            "path": "./notification-service"
+        },
+        {
+            "name": "Shared Resources",
+            "path": "./shared"
+        },
+        {
+            "name": "Kubernetes",
+            "path": "./k8s"
+        }
+    ],
+    "settings": {
+        "java.configuration.updateBuildConfiguration": "automatic",
+        "java.compile.nullAnalysis.mode": "automatic",
+        "java.debug.settings.hotCodeReplace": "auto",
+        "java.test.config": {
+            "vmargs": ["-Xmx512M"]
+        },
+        "docker.composeFile": "docker-compose.yml",
+        "docker.host": "localhost",
+        "files.exclude": {
+            "**/target": true,
+            "**/.mvn": true,
+            "**/node_modules": true
+        },
+        "search.exclude": {
+            "**/target": true,
+            "**/node_modules": true
+        },
+        "terminal.integrated.cwd": "${workspaceFolder}",
+        "java.project.sourcePaths": [
+            "src/main/java"
+        ],
+        "java.project.outputPath": "target/classes",
+        "java.project.referencedLibraries": [
+            "lib/**/*.jar"
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "vscjava.vscode-java-pack",
+            "redhat.java",
+            "vscjava.vscode-maven",
+            "ms-azuretools.vscode-docker",
+            "ms-kubernetes-tools.vscode-kubernetes-tools",
+            "ms-vscode.vscode-json",
+            "eamodio.gitlens",
+            "ms-vscode.vscode-java-debug",
+            "ms-vscode.vscode-java-test",
+            "vscjava.vscode-java-dependency"
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Start All Services",
+                "type": "shell",
+                "command": "docker-compose",
+                "args": ["up", "-d"],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Stop All Services",
+                "type": "shell",
+                "command": "docker-compose",
+                "args": ["down"],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Build API Gateway",
+                "type": "shell",
+                "command": "mvn",
+                "args": ["clean", "install"],
+                "options": {
+                    "cwd": "${workspaceFolder}/api-gateway"
+                },
+                "group": "build"
+            }
+        ]
+    }
+} 

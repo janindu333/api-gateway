@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: saloon-system
+  labels:
+    name: saloon-system
+    environment: development
