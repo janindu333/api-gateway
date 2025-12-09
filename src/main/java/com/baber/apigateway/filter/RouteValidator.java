@@ -12,14 +12,28 @@ public class RouteValidator {
             "/auth/login",
             "/auth/getToken",
             "/auth/validate",
+            "/auth/forgot-password",
             "/auth/reset-password",
+            "/auth/validate-reset-token",
             "/auth/permissions/**",
             "/auth/roles/**",
             "/auth/permissions/defaults/**",
             "/api/saloon/getNearBySaloons",
             "/eureka",
             "/auth/roles",
-            "/auth/admin/tokens/**" // Temporarily added for testing
+            "/auth/admin/tokens/**",
+            // Payment service public endpoints
+            "/payment-service/v3/api-docs",
+            "/api/payment/webhook/**",
+            // Swagger/OpenAPI endpoints
+            "/swagger-ui.html",
+            "/swagger-ui/**",
+            "/v3/api-docs/**",
+            "/webjars/**",
+            "/booking-service/v3/api-docs",
+            "/saloon-service/v3/api-docs",
+            "/identity-service/v3/api-docs",
+            "/notification-service/v3/api-docs"
     );
     
     // Secured endpoints that require JWT authentication

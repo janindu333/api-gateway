@@ -1,0 +1,42 @@
+================================================================================
+🚀 IMMEDIATE SOLUTION - COPY AND PASTE THIS! 🚀
+================================================================================
+
+Open PowerShell (Run as Administrator) and paste this ONE command:
+
+------------------------------------------------------------------------
+
+Get-NetTCPConnection -LocalPort 8761 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "Found PID: $($_.OwningProcess) - Killing..."; Stop-Process -Id $_.OwningProcess -Force }; Write-Host "Done! Checking port..."; netstat -ano | findstr :8761; if ($LASTEXITCODE -ne 0) { Write-Host "SUCCESS: Port 8761 is FREE!" -ForegroundColor Green } else { Write-Host "Port still in use - run as Administrator" -ForegroundColor Red }
+
+------------------------------------------------------------------------
+
+Or use these simpler commands one at a time:
+
+1. Find and kill:
+   Get-NetTCPConnection -LocalPort 8761 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+
+2. Verify:
+   netstat -ano | findstr :8761
+
+3. If still in use, try:
+   for /f "tokens=5" %a in ('netstat -ano ^| findstr :8761') do taskkill /PID %a /F
+
+================================================================================
+📁 OR USE THE SCRIPTS I CREATED:
+================================================================================
+
+Option A: Double-click "KILL-8761.bat" (Run as Administrator)
+
+Option B: Right-click "RUN-ME-FIRST.ps1" → Run with PowerShell
+
+================================================================================
+💡 CHECK YOUR IDE:
+================================================================================
+
+The process might be running in your IDE (IntelliJ/VS Code):
+1. Check the "Run" tab - look for a DiscoveryServerApplication that's still running
+2. Stop it manually
+3. Check "Services" tab in IntelliJ if using Spring Boot dashboard
+
+================================================================================
+

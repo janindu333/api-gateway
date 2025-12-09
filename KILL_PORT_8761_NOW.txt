@@ -1,0 +1,40 @@
+================================================================================
+IMMEDIATE SOLUTION TO KILL PORT 8761
+================================================================================
+
+COPY AND PASTE THIS INTO YOUR POWERSHELL TERMINAL (Run as Administrator):
+
+------------------------------------------------------------------------
+Option 1: Single Command (Copy all lines below)
+------------------------------------------------------------------------
+
+Get-NetTCPConnection -LocalPort 8761 -ErrorAction SilentlyContinue | ForEach-Object { $pid = $_.OwningProcess; Write-Host "Found PID: $pid"; Stop-Process -Id $pid -Force; Write-Host "Killed PID: $pid" }
+
+------------------------------------------------------------------------
+Option 2: If Option 1 doesn't work, use this:
+------------------------------------------------------------------------
+
+$pids = @(); netstat -ano | Select-String ":8761" | ForEach-Object { $parts = $_ -split '\s+'; $pid = $parts[-1]; if ($pid -match '^\d+$') { $pids += [int]$pid } }; $pids = $pids | Select-Object -Unique; $pids | ForEach-Object { Write-Host "Killing PID: $_"; taskkill /PID $_ /F }
+
+------------------------------------------------------------------------
+Option 3: Kill ALL Java processes (Last Resort)
+------------------------------------------------------------------------
+
+Get-Process java* -ErrorAction SilentlyContinue | Stop-Process -Force
+
+------------------------------------------------------------------------
+Option 4: Run the script
+------------------------------------------------------------------------
+
+powershell.exe -ExecutionPolicy Bypass -File force-kill-8761.ps1
+
+================================================================================
+VERIFY PORT IS FREE:
+================================================================================
+
+netstat -ano | findstr :8761
+
+If nothing is returned, the port is FREE!
+
+================================================================================
+
