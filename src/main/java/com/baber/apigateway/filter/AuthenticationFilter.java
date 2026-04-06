@@ -5,6 +5,7 @@ import com.baber.apigateway.service.JwtService;
 import com.baber.apigateway.service.TokenBlacklistService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpMethod;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,31 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
     @Override
     public GatewayFilter apply(Config config) {
         return (exchange, chain) -> {
+            // CORS preflight requests (OPTIONS) must not be blocked by auth.
+            // Otherwise the browser will report CORS failures even when the actual endpoint works.
+            if (exchange.getRequest().getMethod() == HttpMethod.OPTIONS) {
+                // Short-circuit preflight at the gateway.
+                // This prevents downstream services (like identity-service) from rejecting
+                // OPTIONS with "Invalid CORS request".
+                ServerHttpRequest request = exchange.getRequest();
+                String origin = request.getHeaders().getOrigin();
+                String requestedHeaders = request.getHeaders().getFirst(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS);
+
+                if (origin != null && !origin.isBlank()) {
+                    exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    exchange.getResponse().getHeaders().set(HttpHeaders.VARY, "Origin");
+                    exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+                }
+
+                exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET,POST,PUT,DELETE,OPTIONS,PATCH");
+                exchange.getResponse().getHeaders().set(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                        (requestedHeaders != null && !requestedHeaders.isBlank()) ? requestedHeaders : "*"
+                );
+                exchange.getResponse().setStatusCode(HttpStatus.OK);
+                return exchange.getResponse().setComplete();
+            }
+
             return validator.isSecured(exchange.getRequest())
                     .flatMap(isSecured -> {
                         if (isSecured) {
@@ -109,6 +135,16 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
 
         exchange.getResponse().setStatusCode(status);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+
+        // If browser sent an Origin header, echo it back so CORS works even for error responses.
+        String origin = exchange.getRequest().getHeaders().getOrigin();
+        if (origin != null && !origin.isBlank()) {
+            exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            exchange.getResponse().getHeaders().set("Vary", "Origin");
+            exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+            exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET,POST,PUT,DELETE,OPTIONS,PATCH");
+            exchange.getResponse().getHeaders().set(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
+        }
 
         try {
             ObjectMapper objectMapper = new ObjectMapper();

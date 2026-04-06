@@ -9,12 +9,15 @@ import java.util.List;
 public class RouteValidator {
     public static final List<String> openApiEndpoints = List.of(
             "/auth/register",
+            "/auth/signup",
             "/auth/login",
             "/auth/getToken",
             "/auth/validate",
             "/auth/forgot-password",
             "/auth/reset-password",
             "/auth/validate-reset-token",
+            "/auth/verify-email",
+            "/auth/resend-verification",
             "/auth/permissions/**",
             "/auth/roles/**",
             "/auth/permissions/defaults/**",
