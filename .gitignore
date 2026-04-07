@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Local-only secrets manifests
+k8s/secrets-dev-local.yaml
+k8s/*secrets*.local.yaml
