@@ -19,7 +19,6 @@ public class RouteValidator {
             "/auth/roles/**",
             "/auth/permissions/defaults/**",
             "/api/saloon/getNearBySaloons",
-            "/eureka",
             "/auth/roles",
             "/auth/admin/tokens/**",
             // Payment service public endpoints

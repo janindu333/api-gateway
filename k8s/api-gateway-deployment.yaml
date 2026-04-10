@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: saloon-system
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: api-gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "k8s"
+            # Optional: override any upstream if service names/ports differ per cluster
+            - name: SALOON_SERVICE_URL
+              value: "http://saloon-service:8083"
+            - name: BOOKING_SERVICE_URL
+              value: "http://booking-service:8084"
+            - name: IDENTITY_SERVICE_URL
+              value: "http://identity-service:8080"
+            - name: NOTIFICATION_SERVICE_URL
+              value: "http://notification-service:8080"
+            - name: PAYMENT_SERVICE_URL
+              value: "http://payment-service:8086"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
