@@ -34,3 +34,4 @@ build/
 
 ### Local Kubernetes secrets (do not commit) ###
 k8s/secrets-dev-local.yaml
+k8s/*secrets*.local.yaml
