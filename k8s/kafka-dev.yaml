@@ -34,7 +34,8 @@ spec:
     spec:
       containers:
         - name: redpanda
-          image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+          # docker.io often works when in-cluster mirrors break on docker.redpanda.com
+          image: docker.io/redpandadata/redpanda:v24.2.4
           args:
             - redpanda
             - start
