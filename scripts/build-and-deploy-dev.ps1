@@ -99,6 +99,12 @@ if (Test-Path $devSecrets) {
 }
 kubectl apply -f (Join-Path $gw "mysql-deployment.yaml")
 
+$kafkaDev = Join-Path $gw "kafka-dev.yaml"
+if (Test-Path $kafkaDev) {
+    Write-Host "`n>>> kubectl apply kafka (dev Redpanda as kafka-service:9092)" -ForegroundColor Cyan
+    kubectl apply -f $kafkaDev
+}
+
 function Apply-ServiceK8s {
     param([string] $ServiceName)
     $kd = Join-Path $Root "$ServiceName\k8s"
@@ -138,5 +144,5 @@ foreach ($d in $deploys) {
     }
 }
 
-Write-Host "`nDone. Namespace $ns (environment=development). Ensure kafka-service exists for Kafka consumers." -ForegroundColor Green
+Write-Host "`nDone. Namespace $ns (environment=development). Kafka: kafka-dev.yaml (if applied)." -ForegroundColor Green
 kubectl get pods -n $ns -o wide
