@@ -40,15 +40,28 @@ spec:
               value: "redis-service"
             - name: DB_HOST
               value: "mysql-service"
+            # Must match mysql-deployment: MYSQL_ROOT_PASSWORD from saloon-secrets/db-root-password
+            - name: DB_USERNAME
+              value: "root"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: saloon-secrets
+                  key: db-root-password
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: saloon-secrets
+                  key: jwt-secret
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: 8080
-            initialDelaySeconds: 60
+            initialDelaySeconds: 120
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 45
             periodSeconds: 10
