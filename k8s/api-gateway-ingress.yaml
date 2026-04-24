@@ -1,0 +1,24 @@
+# Ingress-only access. Add to hosts (same IP as nginx LB):
+#   <INGRESS_LB_IP> api.saloon.local
+# Swagger UI: http://api.saloon.local/swagger-ui.html
+# Do not use *.localhost as the host (browsers force that to 127.0.0.1).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway-ingress
+  namespace: saloon-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.saloon.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
