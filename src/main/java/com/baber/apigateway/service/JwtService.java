@@ -7,12 +7,15 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.security.Key;
 import java.util.Date;
@@ -27,14 +30,28 @@ public class JwtService {
     @Value("${jwt.secret}")
     private String secret;
 
+    @Value("${jwt.issuer-uri:}")
+    private String issuerUri;
+
+    @Value("${jwt.jwks-uri:}")
+    private String jwksUri;
+
+    private volatile JwtDecoder jwkDecoder;
+
     public boolean validateToken(final String token) {
         try {
-            logger.info("Validating JWT token: {}", token);
-            Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token);
-            logger.info("Token valid. Claims: {}", claims.getBody());
+            if (isIssuerValidationEnabled()) {
+                getOrCreateJwkDecoder().decode(token);
+            } else {
+                Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token);
+                logger.debug("Token valid with shared secret. Subject: {}", claims.getBody().getSubject());
+            }
             return true;
         } catch (JwtException e) {
-            logger.error("JWT validation failed: {}", e.getMessage());
+            logger.warn("JWT validation failed: {}", e.getMessage());
+            return false;
+        } catch (Exception e) {
+            logger.warn("JWT validation failed: {}", e.getMessage());
             return false;
         }
     }
@@ -118,5 +135,34 @@ public class JwtService {
     private Key getSignKey() {
         byte[] keyBytes = Decoders.BASE64.decode(secret);
         return Keys.hmacShaKeyFor(keyBytes);
+    }
+
+    private boolean isIssuerValidationEnabled() {
+        return StringUtils.hasText(issuerUri) || StringUtils.hasText(jwksUri);
+    }
+
+    private JwtDecoder getOrCreateJwkDecoder() {
+        JwtDecoder localDecoder = jwkDecoder;
+        if (localDecoder != null) {
+            return localDecoder;
+        }
+
+        synchronized (this) {
+            if (jwkDecoder != null) {
+                return jwkDecoder;
+            }
+
+            if (StringUtils.hasText(issuerUri)) {
+                logger.info("Using JWT issuer validation via {}", issuerUri);
+                NimbusJwtDecoder decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri);
+                decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuerUri));
+                jwkDecoder = decoder;
+            } else {
+                logger.info("Using JWT JWK set validation via {}", jwksUri);
+                jwkDecoder = NimbusJwtDecoder.withJwkSetUri(jwksUri).build();
+            }
+
+            return jwkDecoder;
+        }
     }
 }

@@ -57,7 +57,10 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
                             }
                             
                             try {
-                               jwtUtil.validateToken(authHeader);
+                                if (!jwtUtil.validateToken(authHeader)) {
+                                    return handleErrorResponse(exchange, "unauthorized access to application",
+                                            HttpStatus.UNAUTHORIZED);
+                                }
                                 // jwtUtil.extractClaims(authHeader);
 
                                 // Debug: Log the token being forwarded
