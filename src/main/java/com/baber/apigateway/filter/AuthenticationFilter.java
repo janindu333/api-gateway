@@ -37,61 +37,37 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
         return (exchange, chain) -> {
             return validator.isSecured(exchange.getRequest())
                     .flatMap(isSecured -> {
-                        if (isSecured) {
-                            // header contains token or not
-                            if (!exchange.getRequest().getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
-                                return handleErrorResponse(exchange, "missing authorization header",
-                                        HttpStatus.UNAUTHORIZED);
-                            }
-
-                            String authHeader = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION)
-                                    .get(0);
-                            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                                authHeader = authHeader.substring(7);
-                            }
-                            
-                            // Check if token is blacklisted
-                            if (tokenBlacklistService.isBlacklisted(authHeader)) {
-                                return handleErrorResponse(exchange, "Token is invalidated",
-                                        HttpStatus.UNAUTHORIZED);
-                            }
-                            
-                            try {
-                                if (!jwtUtil.validateToken(authHeader)) {
-                                    return handleErrorResponse(exchange, "unauthorized access to application",
-                                            HttpStatus.UNAUTHORIZED);
-                                }
-                                // jwtUtil.extractClaims(authHeader);
-
-                                // Debug: Log the token being forwarded
-                                System.out.println("API Gateway: Forwarding token to downstream service");
-                                System.out.println("API Gateway: Token = " + authHeader.substring(0, Math.min(50, authHeader.length())) + "...");
-                                
-                                // Forward the Authorization header to downstream services
-                                String originalAuthHeader = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION).get(0);
-                                System.out.println("API Gateway: Original Auth Header = " + originalAuthHeader);
-                                System.out.println("API Gateway: All headers = " + exchange.getRequest().getHeaders());
-                                
-                                // Ensure the Authorization header is properly forwarded
-                                ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
-                                    .header(HttpHeaders.AUTHORIZATION, originalAuthHeader)
-                                    .build();
-                                
-                                ServerWebExchange mutatedExchange = exchange.mutate()
-                                    .request(mutatedRequest)
-                                    .build();
-                                
-                                return chain.filter(mutatedExchange);
-                            } catch (Exception e) {
-                                return handleErrorResponse(exchange, "unauthorized access to application",
-                                        HttpStatus.UNAUTHORIZED);
-                            }
-                        } else {
-                            // Route is not secured - allow the request to proceed
-                            return chain.filter(exchange);  // ✅ Allow request to continue
+                        if (!isSecured) {
+                            return chain.filter(exchange);
                         }
-                    })
-                    .then(); // Ensure a Mono<Void> is returned at the end
+
+                        String originalAuthHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+                        if (originalAuthHeader == null || originalAuthHeader.isBlank()) {
+                            return handleErrorResponse(exchange, "missing authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (!originalAuthHeader.startsWith("Bearer ")) {
+                            return handleErrorResponse(exchange, "invalid authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        String token = originalAuthHeader.substring(7).trim();
+                        if (token.isEmpty()) {
+                            return handleErrorResponse(exchange, "invalid authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (tokenBlacklistService.isBlacklisted(token)) {
+                            return handleErrorResponse(exchange, "Token is invalidated", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (!jwtUtil.validateToken(token)) {
+                            return handleErrorResponse(exchange, "unauthorized access to application", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                                .header(HttpHeaders.AUTHORIZATION, originalAuthHeader)
+                                .build();
+                        return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                    });
         };
     }
     
