@@ -1,4 +1,4 @@
-package com.baber.apigateway.service; 
+package com.baber.apigateway.service;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
@@ -101,15 +101,14 @@ public class JwtService {
         return extractClaim(token, claims -> claims.get("role", String.class));
     }
 
-    private String createToken(Map<String, Object> claims, String userName, 
-    long expirationMillis) {
+    private String createToken(Map<String, Object> claims, String userName, long expirationMillis) {
         return Jwts.builder()
                 .setClaims(claims)
                 .setSubject(userName)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis()
-                 + expirationMillis))
-                .signWith(getSignKey(), SignatureAlgorithm.HS256).compact();
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMillis))
+                .signWith(getSignKey(), SignatureAlgorithm.HS256)
+                .compact();
     }
 
     public String extractUsername(String token) {
