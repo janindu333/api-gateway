@@ -15,6 +15,8 @@ public class RouteValidator {
             "/auth/forgot-password",
             "/auth/reset-password",
             "/auth/validate-reset-token",
+            "/auth/google",
+            "/auth/google/**",
             "/auth/permissions/**",
             "/auth/roles/**",
             "/auth/permissions/defaults/**",
