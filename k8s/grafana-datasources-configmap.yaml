@@ -1,0 +1,45 @@
+# Provision Tempo + Loki on grafana.saloon.local (cross-namespace to observability).
+# Apply before or with grafana-deployment.yaml (see TRACING_TEMPO.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: saloon-system
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo.observability.svc.cluster.local:3200
+        isDefault: false
+        jsonData:
+          httpMethod: GET
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            filterByTraceID: true
+            filterBySpanID: false
+            customQuery: true
+            query: '{job="kubernetes-pods"} |= "$${__trace.traceId}"'
+          serviceMap:
+            datasourceUid: tempo
+          nodeGraph:
+            enabled: true
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.observability.svc.cluster.local:3100
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - name: TraceID
+              matcherRegex: "traceId=([a-f0-9]{32})"
+              url: "$${__value.raw}"
+              datasourceUid: tempo
+              urlDisplayLabel: View trace

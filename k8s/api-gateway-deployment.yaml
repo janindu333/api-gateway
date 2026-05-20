@@ -66,6 +66,15 @@ spec:
               value: "true"
             - name: CORS_ALLOWED_ORIGINS
               value: "http://localhost:3000,http://localhost:8080,http://api.saloon.local"
+            # Distributed tracing -> Tempo (architecture doc)
+            - name: MANAGEMENT_TRACING_ENABLED
+              value: "true"
+            - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+              value: "1.0"
+            - name: MANAGEMENT_OTLP_TRACING_ENDPOINT
+              value: "http://tempo.observability.svc.cluster.local:4318/v1/traces"
+            - name: MANAGEMENT_TRACING_PROPAGATION_TYPE
+              value: "w3c"
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
