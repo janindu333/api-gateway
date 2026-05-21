@@ -1,122 +1,120 @@
-package com.baber.apigateway.service; 
-
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jws;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
+package com.baber.apigateway.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-import java.security.Key;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.function.Function;
+import java.util.Arrays;
 
+/**
+ * Gateway token validation for secured routes: <b>OAuth2 / Keycloak only</b>
+ * via {@code jwt.jwks-uri} (preferred) or {@code jwt.issuer-uri}. HS256 / shared-secret tokens are not accepted here.
+ * <p>
+ * When Keycloak is reached from pods via {@code host.docker.internal} but tokens still carry
+ * {@code iss=http://localhost:9090/realms/...}, use {@code jwt.jwks-uri} plus {@code jwt.accepted-issuers}
+ * (same pattern as identity-service).
+ */
 @Service
 public class JwtService {
     private static final Logger logger = LoggerFactory.getLogger(JwtService.class);
 
-    @Value("${jwt.secret}")
-    private String secret;
+    @Value("${jwt.issuer-uri:}")
+    private String issuerUri;
+
+    @Value("${jwt.jwks-uri:}")
+    private String jwksUri;
+
+    @Value("${jwt.accepted-issuers:}")
+    private String acceptedIssuersCsv;
+
+    private volatile JwtDecoder jwtDecoder;
 
     public boolean validateToken(final String token) {
+        if (!isIssuerValidationEnabled()) {
+            logger.warn("JWT validation skipped: neither jwt.issuer-uri nor jwt.jwks-uri is configured; refusing token");
+            return false;
+        }
         try {
-            logger.info("Validating JWT token: {}", token);
-            Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token);
-            logger.info("Token valid. Claims: {}", claims.getBody());
+            getOrCreateDecoder().decode(token);
+            logger.debug("Token valid via OAuth2 / JWKS");
             return true;
         } catch (JwtException e) {
-            logger.error("JWT validation failed: {}", e.getMessage());
+            logger.warn("JWT validation failed: {}", e.getMessage());
             return false;
-        }
-    }
-
-    public boolean validateTokenWithExpiration(final String token) {
-        try {
-            Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token);
-            return !isTokenExpired(token);
-        } catch (JwtException e) {
-            return false;
-        }
-    }
-
-    public boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
-    }
-
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
-    }
-
-    public String extractTokenType(String token) {
-        return extractClaim(token, claims -> claims.get("tokenType", String.class));
-    }
-
-    public String generateToken(String userName, String role, long expirationMillis) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", role);
-        return createToken(claims, userName, expirationMillis);
-    }
-
-    public String generateAccessToken(String userName, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", role);
-        claims.put("tokenType", "ACCESS");
-        return createToken(claims, userName, 120 * 60 * 1000); // 2 hours
-    }
-
-    public String generateRefreshToken(String userName, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", role);
-        claims.put("tokenType", "REFRESH");
-        return createToken(claims, userName, 7 * 24 * 60 * 60 * 1000); // 7 days
-    }
-
-    public String extractRole(String token) {
-        return extractClaim(token, claims -> claims.get("role", String.class));
-    }
-
-    private String createToken(Map<String, Object> claims, String userName, 
-    long expirationMillis) {
-        return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(userName)
-                .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis()
-                 + expirationMillis))
-                .signWith(getSignKey(), SignatureAlgorithm.HS256).compact();
-    }
-
-    public String extractUsername(String token) {
-        try {
-            String username = extractClaim(token, Claims::getSubject);
-            logger.info("Extracted username from token: {}", username);
-            return username;
         } catch (Exception e) {
-            logger.error("Failed to extract username from token: {}", e.getMessage());
-            throw e;
+            logger.warn("JWT validation failed: {}", e.getMessage());
+            return false;
         }
     }
 
-    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
+    private boolean isIssuerValidationEnabled() {
+        return StringUtils.hasText(issuerUri) || StringUtils.hasText(jwksUri);
     }
 
-    private Claims extractAllClaims(String token) {
-        return Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token).getBody();
+    private JwtDecoder getOrCreateDecoder() {
+        JwtDecoder local = jwtDecoder;
+        if (local != null) {
+            return local;
+        }
+
+        synchronized (this) {
+            if (jwtDecoder != null) {
+                return jwtDecoder;
+            }
+
+            // Prefer JWKS so signature is checked against the realm keys reachable from this pod,
+            // while iss can still be a browser-facing localhost URL.
+            if (StringUtils.hasText(jwksUri)) {
+                logger.info("Using JWT JWK set validation via {}", jwksUri);
+                NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwksUri.trim()).build();
+                decoder.setJwtValidator(buildJwtValidators(acceptedIssuersCsv));
+                jwtDecoder = decoder;
+            } else if (StringUtils.hasText(issuerUri)) {
+                logger.info("Using JWT issuer validation via {}", issuerUri);
+                NimbusJwtDecoder decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri.trim());
+                decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuerUri.trim()));
+                jwtDecoder = decoder;
+            } else {
+                throw new IllegalStateException("JWT decoder misconfiguration");
+            }
+
+            return jwtDecoder;
+        }
     }
 
-    private Key getSignKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secret);
-        return Keys.hmacShaKeyFor(keyBytes);
+    private static OAuth2TokenValidator<Jwt> buildJwtValidators(String acceptedIssuersCsv) {
+        JwtTimestampValidator timestamp = new JwtTimestampValidator();
+        if (!StringUtils.hasText(acceptedIssuersCsv)) {
+            return timestamp;
+        }
+        OAuth2TokenValidator<Jwt> issuers = jwt -> validateAcceptedIssuers(jwt, acceptedIssuersCsv);
+        return new DelegatingOAuth2TokenValidator<>(timestamp, issuers);
+    }
+
+    private static OAuth2TokenValidatorResult validateAcceptedIssuers(Jwt jwt, String acceptedIssuersCsv) {
+        String issRaw = jwt.getClaimAsString("iss");
+        final String iss = issRaw != null ? issRaw : "";
+        boolean ok = Arrays.stream(acceptedIssuersCsv.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .anyMatch(allowed -> allowed.equals(iss));
+        if (ok) {
+            return OAuth2TokenValidatorResult.success();
+        }
+        return OAuth2TokenValidatorResult.failure(
+                new OAuth2Error("invalid_token", "Unexpected iss: " + iss, null));
     }
 }

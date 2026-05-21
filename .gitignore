@@ -31,3 +31,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local Kubernetes secrets (do not commit) ###
+k8s/secrets-dev-local.yaml
+k8s/*secrets*.local.yaml
+
+### JVM crash artifacts ###
+hs_err_pid*.log
+replay_pid*.log
