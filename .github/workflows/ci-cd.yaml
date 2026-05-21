@@ -1,7 +1,8 @@
 # GitFlow: feature PRs -> development -> staging -> main
-# - CI (build + test): PRs and pushes to development, staging, main (GitHub-hosted)
-# - CD: push to main only -> publish Docker image to Docker Hub
-# - Local K8s deploy: manual via scripts/deploy-k8s.ps1 (not from GitHub Actions)
+# - CI: PRs and pushes to development, staging, main (GitHub-hosted)
+# - CD staging/prod: push to staging/main -> ECR + EKS (OIDC, see .github/EKS_DEPLOY.md)
+# - CD optional: push to main -> Docker Hub (legacy / non-AWS consumers)
+# - Local K8s: manual via scripts/deploy-k8s.ps1
 #
 # See: .github/CI_CD_BRANCHING.md
 
@@ -22,6 +23,15 @@ on:
 concurrency:
   group: ci-cd-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'api-gateway' }}
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'saloon-system' }}
 
 jobs:
   ci:
@@ -48,6 +58,144 @@ jobs:
           name: api-gateway-jar
           path: target/*.jar
           if-no-files-found: error
+
+  build-push-ecr-staging:
+    name: Build and push image (ECR, staging)
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push to ECR
+        id: meta
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  build-push-ecr-production:
+    name: Build and push image (ECR, production)
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push to ECR
+        id: meta
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  deploy-staging-eks:
+    name: Deploy to EKS (staging)
+    needs: build-push-ecr-staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME || vars.EKS_CLUSTER_NAME_STAGING }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Roll out api-gateway
+        env:
+          IMAGE: ${{ needs.build-push-ecr-staging.outputs.image }}
+          NAMESPACE: ${{ env.K8S_NAMESPACE }}
+        run: |
+          kubectl apply -f k8s/api-gateway-deployment.yaml -n "$NAMESPACE"
+          kubectl apply -f k8s/api-gateway-service.yaml -n "$NAMESPACE"
+          kubectl set image "deployment/api-gateway" "api-gateway=${IMAGE}" -n "$NAMESPACE"
+          kubectl patch deployment api-gateway -n "$NAMESPACE" --type=json \
+            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Always"}]'
+          kubectl rollout status deployment/api-gateway -n "$NAMESPACE" --timeout=600s
+
+  deploy-production-eks:
+    name: Deploy to EKS (production)
+    needs: build-push-ecr-production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME || vars.EKS_CLUSTER_NAME_PRODUCTION }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Roll out api-gateway
+        env:
+          IMAGE: ${{ needs.build-push-ecr-production.outputs.image }}
+          NAMESPACE: ${{ env.K8S_NAMESPACE }}
+        run: |
+          kubectl apply -f k8s/api-gateway-deployment.yaml -n "$NAMESPACE"
+          kubectl apply -f k8s/api-gateway-service.yaml -n "$NAMESPACE"
+          kubectl set image "deployment/api-gateway" "api-gateway=${IMAGE}" -n "$NAMESPACE"
+          kubectl patch deployment api-gateway -n "$NAMESPACE" --type=json \
+            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Always"}]'
+          kubectl rollout status deployment/api-gateway -n "$NAMESPACE" --timeout=600s
 
   publish-production:
     name: Publish Production image (Docker Hub)

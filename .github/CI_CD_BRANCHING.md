@@ -1,6 +1,7 @@
 # API Gateway — Git branching & CI/CD
 
-Industry-style pipeline for a **local** dev setup: GitHub runs **build + test only**; you deploy to Docker Desktop K8s **manually** on your machine.
+- **Local (Docker Desktop):** GitHub runs **build + test** on `development`; you deploy manually.
+- **AWS EKS (staging / prod):** merge to `staging` or `main` triggers **ECR push + EKS rollout** — see [EKS_DEPLOY.md](EKS_DEPLOY.md).
 
 ## Branch flow (GitFlow)
 
@@ -20,15 +21,13 @@ feature/*  --PR-->  development  --PR-->  staging  --PR-->  main
 | Open PR → `development` | **Build and Test** | — |
 | Merge to `development` | **Build and Test** | Optional: `.\scripts\deploy-k8s.ps1 -Environment dev` |
 | PR → `staging` | **Build and Test** | — |
-| Merge to `staging` | **Build and Test** | Optional: `.\scripts\deploy-k8s.ps1 -Environment staging` |
+| Merge to `staging` | **Build and Test** + **ECR** + **EKS deploy** | Optional: local `deploy-k8s.ps1 -Environment staging` |
 | PR → `main` | **Build and Test** | — |
-| Merge to `main` | **Build and Test** + **Docker Hub push** | Optional: deploy prod image locally or to cloud |
+| Merge to `main` | **Build and Test** + **ECR** + **EKS prod** + optional **Docker Hub** | Optional: local prod pull/deploy |
 
-## Why no auto-deploy from Actions to your laptop
+## Why no auto-deploy to your laptop
 
-Shared **DEV/STAGING** in industry is usually a **remote cluster** (EKS, AKS, etc.), not each developer’s Docker Desktop. GitHub-hosted runners cannot reach your local Kubernetes, so auto-deploy to a personal machine is avoided here.
-
-When you add a **shared cloud DEV** cluster later, add a deploy job that uses `kubectl`/Helm with cluster credentials in GitHub Secrets—not a self-hosted runner on your laptop.
+GitHub-hosted runners cannot reach Docker Desktop on your PC. **Staging/prod** use **EKS** via OIDC (`.github/EKS_DEPLOY.md`). Local deploy stays `scripts/deploy-k8s.ps1`.
 
 ## Secrets (Docker Hub on `main` only)
 
