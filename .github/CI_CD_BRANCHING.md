@@ -1,58 +1,56 @@
 # API Gateway — Git branching & CI/CD
 
+Industry-style pipeline for a **local** dev setup: GitHub runs **build + test only**; you deploy to Docker Desktop K8s **manually** on your machine.
+
 ## Branch flow (GitFlow)
 
 ```text
 feature/*  --PR-->  development  --PR-->  staging  --PR-->  main
                          |                  |              |
-                    auto deploy         auto deploy    Docker Hub +
-                    Dev K8s             Staging K8s    optional prod K8s
-                    (self-hosted)       (self-hosted)  (self-hosted)
+                    CI only            CI only         CI + Docker Hub
+                    (GitHub)           (GitHub)        (GitHub)
+                         |                  |              |
+                    you deploy         you deploy     pull image /
+                    locally            locally        deploy to prod cluster
 ```
 
-| Step | What happens |
-|------|----------------|
-| Work on `feature/*` | Local dev only |
-| Open PR → `development` | **CI** runs (build + `mvn verify`) on GitHub |
-| Merge to `development` | **CI** + **Deploy to Dev** (self-hosted → Docker Desktop K8s) |
-| PR `development` → `staging` | **CI** only (manual PR by lead) |
-| Merge to `staging` | **CI** + **Deploy to Staging** (self-hosted K8s) |
-| PR `staging` → `main` | **CI** only (manual PR) |
-| Merge to `main` | **CI** + push `janindu3/api-gateway` to **Docker Hub** + optional prod K8s deploy |
+| Step | GitHub Actions | Local (your PC) |
+|------|----------------|-----------------|
+| Work on `feature/*` | — | Run/test app as needed |
+| Open PR → `development` | **Build and Test** | — |
+| Merge to `development` | **Build and Test** | Optional: `.\scripts\deploy-k8s.ps1 -Environment dev` |
+| PR → `staging` | **Build and Test** | — |
+| Merge to `staging` | **Build and Test** | Optional: `.\scripts\deploy-k8s.ps1 -Environment staging` |
+| PR → `main` | **Build and Test** | — |
+| Merge to `main` | **Build and Test** + **Docker Hub push** | Optional: deploy prod image locally or to cloud |
 
-## One-time setup: self-hosted runner (required for Dev/Staging auto-deploy)
+## Why no auto-deploy from Actions to your laptop
 
-GitHub’s cloud runners **cannot** reach Kubernetes on your PC. Dev/Staging deploy jobs use `runs-on: self-hosted`.
+Shared **DEV/STAGING** in industry is usually a **remote cluster** (EKS, AKS, etc.), not each developer’s Docker Desktop. GitHub-hosted runners cannot reach your local Kubernetes, so auto-deploy to a personal machine is avoided here.
 
-1. On the machine that runs **Docker Desktop** with Kubernetes enabled:
-   - Repo → **Settings** → **Actions** → **Runners** → **New self-hosted runner**
-   - Follow GitHub’s Windows steps (download, configure, run as a service).
+When you add a **shared cloud DEV** cluster later, add a deploy job that uses `kubectl`/Helm with cluster credentials in GitHub Secrets—not a self-hosted runner on your laptop.
 
-2. Labels: default is fine; jobs use `self-hosted`.
+## Secrets (Docker Hub on `main` only)
 
-3. Ensure `kubectl` and `docker` work in PowerShell on that machine.
-
-## Secrets (Production / Docker Hub)
-
-In repo **Settings → Secrets and variables → Actions**:
+Repo **Settings → Secrets and variables → Actions**:
 
 | Secret | Used for |
 |--------|----------|
 | `DOCKER_USERNAME` | Push image on merge to `main` |
-| `DOCKER_PASSWORD` | Docker Hub token |
+| `DOCKER_PASSWORD` | Docker Hub access token |
 
-## Manual deploy (without waiting for CI)
+## Manual deploy to local Kubernetes
 
-From `api-gateway` repo root:
+From repo root (after `git pull` on the branch you want to run):
 
 ```powershell
-./scripts/deploy-k8s.ps1 -Environment dev
-./scripts/deploy-k8s.ps1 -Environment staging
-./scripts/deploy-k8s.ps1 -Environment prod -PullFromDockerHub
+.\scripts\deploy-k8s.ps1 -Environment dev
+.\scripts\deploy-k8s.ps1 -Environment staging
+.\scripts\deploy-k8s.ps1 -Environment prod -PullFromDockerHub
 ```
 
 ## PR targets
 
-Open feature PRs into **`development`**, not `main`, to match this pipeline.
+Open feature PRs into **`development`**, not `main`.
 
-Workflow file: `.github/workflows/ci-cd.yaml`
+Workflow: `.github/workflows/ci-cd.yaml`

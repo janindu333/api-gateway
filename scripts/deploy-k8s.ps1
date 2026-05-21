@@ -1,5 +1,5 @@
 # Deploy api-gateway to local Kubernetes (Docker Desktop).
-# Used by GitHub Actions self-hosted runner on push to development / staging / main.
+# Run manually on your machine — not triggered by GitHub Actions (see .github/CI_CD_BRANCHING.md).
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('dev', 'staging', 'prod')]
