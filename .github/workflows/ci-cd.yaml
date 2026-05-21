@@ -1,9 +1,9 @@
 # GitFlow: feature PRs -> development -> staging -> main
-# - CI (build + test): all PRs and pushes to development, staging, main (GitHub-hosted)
-# - Dev/Staging K8s deploy: push to development / staging (self-hosted runner on your PC)
-# - Production: push to main -> Docker Hub; optional K8s on self-hosted runner
+# - CI (build + test): PRs and pushes to development, staging, main (GitHub-hosted)
+# - CD: push to main only -> publish Docker image to Docker Hub
+# - Local K8s deploy: manual via scripts/deploy-k8s.ps1 (not from GitHub Actions)
 #
-# Setup: .github/CI_CD_BRANCHING.md
+# See: .github/CI_CD_BRANCHING.md
 
 name: CI/CD for API Gateway
 
@@ -49,34 +49,6 @@ jobs:
           path: target/*.jar
           if-no-files-found: error
 
-  deploy-dev:
-    name: Deploy to Dev (local K8s)
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to Docker Desktop Kubernetes
-        shell: pwsh
-        run: ./scripts/deploy-k8s.ps1 -Environment dev
-
-  deploy-staging:
-    name: Deploy to Staging (local K8s)
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to Docker Desktop Kubernetes
-        shell: pwsh
-        run: ./scripts/deploy-k8s.ps1 -Environment staging
-
   publish-production:
     name: Publish Production image (Docker Hub)
     needs: ci
@@ -99,23 +71,3 @@ jobs:
           docker tag janindu3/api-gateway:${{ github.sha }} janindu3/api-gateway:latest
           docker push janindu3/api-gateway:${{ github.sha }}
           docker push janindu3/api-gateway:latest
-
-  deploy-production-k8s:
-    name: Deploy Production to K8s (self-hosted)
-    needs: publish-production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Deploy latest image to local Kubernetes
-        shell: pwsh
-        run: ./scripts/deploy-k8s.ps1 -Environment prod -PullFromDockerHub
