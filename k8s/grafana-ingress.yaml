@@ -1,0 +1,23 @@
+# Same nginx ingress pattern as api-gateway-ingress.yaml
+# Add to hosts (same IP as nginx LB):
+#   <INGRESS_LB_IP> grafana.saloon.local
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: saloon-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: grafana.saloon.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80

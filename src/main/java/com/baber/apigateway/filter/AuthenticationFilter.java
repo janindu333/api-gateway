@@ -2,6 +2,7 @@ package com.baber.apigateway.filter;
 
 import com.baber.apigateway.dto.ErrorResponse;
 import com.baber.apigateway.service.JwtService;
+import com.baber.apigateway.service.TokenBlacklistService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -24,6 +26,9 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
 
     @Autowired
     private JwtService jwtUtil;
+    
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
     public AuthenticationFilter() {
         super(Config.class);
     }
@@ -32,35 +37,40 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
         return (exchange, chain) -> {
             return validator.isSecured(exchange.getRequest())
                     .flatMap(isSecured -> {
-                        if (isSecured) {
-                            // header contains token or not
-                            if (!exchange.getRequest().getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
-                                return handleErrorResponse(exchange, "missing authorization header",
-                                        HttpStatus.INTERNAL_SERVER_ERROR);
-                            }
-
-                            String authHeader = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION)
-                                    .get(0);
-                            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                                authHeader = authHeader.substring(7);
-                            }
-                            try {
-                               jwtUtil.validateToken(authHeader);
-                                // jwtUtil.extractClaims(authHeader);
-
-                                return chain.filter(exchange);
-                            } catch (Exception e) {
-                                return handleErrorResponse(exchange, "unauthorized access to application",
-                                        HttpStatus.UNAUTHORIZED);
-                            }
-                        } else {
-                            return handleErrorResponse(exchange, "unauthorized access to application",
-                                    HttpStatus.UNAUTHORIZED);
+                        if (!isSecured) {
+                            return chain.filter(exchange);
                         }
-                    })
-                    .then(); // Ensure a Mono<Void> is returned at the end
+
+                        String originalAuthHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+                        if (originalAuthHeader == null || originalAuthHeader.isBlank()) {
+                            return handleErrorResponse(exchange, "missing authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (!originalAuthHeader.startsWith("Bearer ")) {
+                            return handleErrorResponse(exchange, "invalid authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        String token = originalAuthHeader.substring(7).trim();
+                        if (token.isEmpty()) {
+                            return handleErrorResponse(exchange, "invalid authorization header", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (tokenBlacklistService.isBlacklisted(token)) {
+                            return handleErrorResponse(exchange, "Token is invalidated", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        if (!jwtUtil.validateToken(token)) {
+                            return handleErrorResponse(exchange, "unauthorized access to application", HttpStatus.UNAUTHORIZED);
+                        }
+
+                        ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                                .header(HttpHeaders.AUTHORIZATION, originalAuthHeader)
+                                .build();
+                        return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                    });
         };
     }
+    
     private Mono<Void> handleErrorResponse(ServerWebExchange exchange, String errorMessage, HttpStatus status) {
         ErrorResponse errorResponse = new ErrorResponse(
                 false,
