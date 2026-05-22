@@ -1,12 +1,8 @@
-# GitFlow: feature PRs -> development -> staging -> main
-# - CI: PRs and pushes to development, staging, main (GitHub-hosted)
-# - CD staging/prod: push to staging/main -> ECR + EKS (OIDC, see .github/EKS_DEPLOY.md)
-# - CD optional: push to main -> Docker Hub (legacy / non-AWS consumers)
-# - Local K8s: manual via scripts/deploy-k8s.ps1
-#
-# See: .github/CI_CD_BRANCHING.md
+# Enterprise CI/CD — api-gateway only
+# GitFlow + EKS + Helm + ECR (digest) + Trivy + Cosign + Docker Hub retag
+# See: .github/ENTERPRISE_CICD.md and cicd-pipeline-docs.pdf
 
-name: CI/CD for API Gateway
+name: CI/CD for API Gateway - Enterprise
 
 on:
   pull_request:
@@ -19,19 +15,32 @@ on:
       - development
       - staging
       - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deploy target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
 
 concurrency:
-  group: ci-cd-${{ github.workflow }}-${{ github.ref }}
+  group: enterprise-cicd-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   id-token: write
+  security-events: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'api-gateway' }}
   K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'saloon-system' }}
+  DOCKERHUB_IMAGE: janindu3/api-gateway
 
 jobs:
   ci:
@@ -59,14 +68,27 @@ jobs:
           path: target/*.jar
           if-no-files-found: error
 
-  build-push-ecr-staging:
-    name: Build and push image (ECR, staging)
+  build-push-ecr:
+    name: Build, scan, sign, and push (ECR)
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (
+        github.ref == 'refs/heads/staging' ||
+        github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/tags/v')
+      ))
     runs-on: ubuntu-latest
-    environment: staging
+    environment: >-
+      ${{
+        github.event_name == 'workflow_dispatch' && github.event.inputs.environment ||
+        startsWith(github.ref, 'refs/tags/v') && 'production' ||
+        github.ref == 'refs/heads/main' && 'production' ||
+        github.ref == 'refs/heads/staging' && 'staging' ||
+        'development'
+      }}
     outputs:
-      image: ${{ steps.meta.outputs.image }}
+      image_digest: ${{ steps.image-ref.outputs.digest_uri }}
 
     steps:
       - name: Checkout code
@@ -79,33 +101,128 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr
+        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push to ECR
-        id: meta
-        env:
-          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: '0'
+          format: sarif
+          output: trivy-results.sarif
 
-  build-push-ecr-production:
-    name: Build and push image (ECR, production)
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-api-gateway
+
+      - name: Build and push Docker image to ECR
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - name: Set immutable image reference (digest)
+        id: image-ref
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPO: ${{ env.ECR_REPOSITORY }}
+        run: |
+          DIGEST_URI="${REGISTRY}/${REPO}@${{ steps.build.outputs.digest }}"
+          echo "digest_uri=${DIGEST_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image with Cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: 'true'
+        run: |
+          cosign sign --yes "${{ steps.image-ref.outputs.digest_uri }}"
+
+  deploy:
+    name: Deploy to EKS (Helm atomic)
+    needs: build-push-ecr
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (
+        github.ref == 'refs/heads/staging' ||
+        github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/tags/v')
+      ))
     runs-on: ubuntu-latest
-    environment: production
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
+    environment: >-
+      ${{
+        github.event_name == 'workflow_dispatch' && github.event.inputs.environment ||
+        startsWith(github.ref, 'refs/tags/v') && 'production' ||
+        github.ref == 'refs/heads/main' && 'production' ||
+        github.ref == 'refs/heads/staging' && 'staging' ||
+        'development'
+      }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Resolve deployment environment
+        id: deploy-env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "name=production" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "name=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Helm upgrade (atomic rollback on failure)
+        env:
+          DEPLOY_ENV: ${{ steps.deploy-env.outputs.name }}
+          IMAGE_DIGEST: ${{ needs.build-push-ecr.outputs.image_digest }}
+          NAMESPACE: ${{ env.K8S_NAMESPACE }}
+        run: |
+          helm upgrade --install api-gateway ./helm/api-gateway \
+            -f "./helm/api-gateway/values-${DEPLOY_ENV}.yaml" \
+            --namespace "${NAMESPACE}" \
+            --create-namespace \
+            --set image.digest="${IMAGE_DIGEST}" \
+            --atomic \
+            --timeout 10m
+
+  publish-dockerhub:
+    name: Publish to Docker Hub (retag from ECR digest)
+    needs: [ci, build-push-ecr]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -113,109 +230,21 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push to ECR
-        id: meta
-        env:
-          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          IMAGE="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-
-  deploy-staging-eks:
-    name: Deploy to EKS (staging)
-    needs: build-push-ecr-staging
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    runs-on: ubuntu-latest
-    environment: staging
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig \
-            --name "${{ vars.EKS_CLUSTER_NAME || vars.EKS_CLUSTER_NAME_STAGING }}" \
-            --region "${{ env.AWS_REGION }}"
-
-      - name: Roll out api-gateway
-        env:
-          IMAGE: ${{ needs.build-push-ecr-staging.outputs.image }}
-          NAMESPACE: ${{ env.K8S_NAMESPACE }}
-        run: |
-          kubectl apply -f k8s/api-gateway-deployment.yaml -n "$NAMESPACE"
-          kubectl apply -f k8s/api-gateway-service.yaml -n "$NAMESPACE"
-          kubectl set image "deployment/api-gateway" "api-gateway=${IMAGE}" -n "$NAMESPACE"
-          kubectl patch deployment api-gateway -n "$NAMESPACE" --type=json \
-            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Always"}]'
-          kubectl rollout status deployment/api-gateway -n "$NAMESPACE" --timeout=600s
-
-  deploy-production-eks:
-    name: Deploy to EKS (production)
-    needs: build-push-ecr-production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig \
-            --name "${{ vars.EKS_CLUSTER_NAME || vars.EKS_CLUSTER_NAME_PRODUCTION }}" \
-            --region "${{ env.AWS_REGION }}"
-
-      - name: Roll out api-gateway
-        env:
-          IMAGE: ${{ needs.build-push-ecr-production.outputs.image }}
-          NAMESPACE: ${{ env.K8S_NAMESPACE }}
-        run: |
-          kubectl apply -f k8s/api-gateway-deployment.yaml -n "$NAMESPACE"
-          kubectl apply -f k8s/api-gateway-service.yaml -n "$NAMESPACE"
-          kubectl set image "deployment/api-gateway" "api-gateway=${IMAGE}" -n "$NAMESPACE"
-          kubectl patch deployment api-gateway -n "$NAMESPACE" --type=json \
-            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Always"}]'
-          kubectl rollout status deployment/api-gateway -n "$NAMESPACE" --timeout=600s
-
-  publish-production:
-    name: Publish Production image (Docker Hub)
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Log in to Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Pull ECR image by digest and push to Docker Hub
+        env:
+          ECR_IMAGE: ${{ needs.build-push-ecr.outputs.image_digest }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          docker build -t janindu3/api-gateway:${{ github.sha }} .
-          docker tag janindu3/api-gateway:${{ github.sha }} janindu3/api-gateway:latest
-          docker push janindu3/api-gateway:${{ github.sha }}
-          docker push janindu3/api-gateway:latest
+          docker pull "${ECR_IMAGE}"
+          docker tag "${ECR_IMAGE}" "${{ env.DOCKERHUB_IMAGE }}:${SHA_TAG}"
+          docker tag "${ECR_IMAGE}" "${{ env.DOCKERHUB_IMAGE }}:latest"
+          docker push "${{ env.DOCKERHUB_IMAGE }}:${SHA_TAG}"
+          docker push "${{ env.DOCKERHUB_IMAGE }}:latest"

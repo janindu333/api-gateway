@@ -1,0 +1,6 @@
+# Staging EKS overrides (merge with values.yaml)
+ingress:
+  host: api-staging.saloon.example.com
+
+env:
+  CORS_ALLOWED_ORIGINS: "https://staging.saloon.example.com,http://api-staging.saloon.example.com"
