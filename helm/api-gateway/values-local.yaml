@@ -1,0 +1,10 @@
+# Local Docker Desktop — manual: helm upgrade -f values-local.yaml
+# Set digest to your locally built image (not @sha256)
+image:
+  digest: "api-gateway:dev"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+ingress:
+  host: api.saloon.local
